@@ -386,7 +386,7 @@ float consensus(){
 }
 
 void basic_commands(String array[], int count){
-  if(array[0] == "r" && count == 1){
+  if(array[0] == "c" && count == 1){
     send_consensus_order();
     duty = consensus(); }
 }
