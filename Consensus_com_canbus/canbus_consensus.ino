@@ -13,10 +13,15 @@ MCP2515::ERROR err;
 
 uint8_t pico_flash_id[8];
 unsigned long time_to_write, time_wait;
-unsigned long write_delay {100};
+unsigned long write_delay {10};
 
 const byte interruptPin {20};
 volatile byte data_available {false};
+
+//variables to read the commands passed by serial monitor
+String strs[4]; 
+String inputString = "";         // a String to hold incoming data
+int StringCount {0};
 
 //the interrupt service routine
 void read_interrupt(uint gpio, uint32_t events) {
@@ -219,6 +224,7 @@ struct Node node3 = {{2},{0,0},{0,0},{0,0},{k31,k32,k33},{4.5},{0.5},{0,0,c3},{o
 
 struct Node nodep;
 
+float duty;
 
 int states[3] {0,0,0}; //0 represents read only, 1 represents write only
 
@@ -238,10 +244,36 @@ void setup(){
   can0.setNormalMode();
   gpio_set_irq_enabled_with_callback(interruptPin, GPIO_IRQ_EDGE_FALL, true, &read_interrupt );
   time_to_write = millis() + write_delay;
-  float duty = consensus();
 }
 
 void loop(){
+  if (Serial.available() > 0) {
+    // read the incoming string
+    inputString = Serial.readString();
+    split_array_string(inputString, strs);
+    basic_commands(strs, StringCount);
+    // clear the string:
+    inputString = "";   
+  }
+
+  if( data_available ){
+   // noInterrupts();
+    can_frame frm {canMsgRx}; //local copy
+   // interrupts();
+    data_available = false;
+    Serial.print("Received message from node ");
+    Serial.print( canMsgRx.can_id , HEX);
+    Serial.print(" : ");
+    Serial.println(" ");
+    //Serial.println();
+
+    if(frm.data[0] == 0b11111100){ 
+      Serial.println("Comando consensus recebido por can bus");
+      Serial.println();
+      duty = consensus();
+    }
+
+  }
 
 }
 
@@ -289,15 +321,15 @@ float consensus(){
             noInterrupts();
             err = can0.sendMessage(&canMsgTx);
             interrupts();
-            //Serial.print("Sending message ");
-            //Serial.print( msg_sent );
-            //Serial.print(" from node ");
-            //Serial.print( node_address, HEX );
-            //Serial.print(" for iteration ");
-            //Serial.println(i);
-            //for (int k=0 ; k < canMsgTx.can_dlc ; k++)
-              //Serial.print( canMsgTx.data[ k ], BIN), Serial.print(" ");
-            //Serial.println();
+            // Serial.print("Sending message ");
+            // Serial.print( msg_sent );
+            // Serial.print(" from node ");
+            // Serial.print( node_address, HEX );
+            // Serial.print(" for iteration ");
+            // Serial.println(i);
+            // for (int k=0 ; k < canMsgTx.can_dlc ; k++)
+            //   Serial.print( canMsgTx.data[ k ], BIN), Serial.print(" ");
+            // Serial.println();
             msg_sent++;
             time_to_write = millis() + write_delay;
         }
@@ -337,14 +369,59 @@ float consensus(){
       nodep.y[j] = nodep.y[j] + rho*(nodep.d[j]-nodep.d_av[j]);
     }
   }
-  Serial.print("Solucao final: ");
+  //solucao dos duty cycles
+  Serial.println("Solucao final dos duty cycles: ");
     for(int j=0;j<3;j++){
       Serial.println(nodep.d_av[j]);
     }
 
-  float l[3]{0,0,0};
+  //solucao que indica a referencia que cada no precisa seguir
+  float reference = 0;
   //mulitiplicar K*d+o
- // l[0] = k11*nodep.d_av[0] + k12*nodep.d_av[1] + k13*nodep.d_av[2] + o1; 
-  
-  return nodep.d_av[node_order];  
+  reference = nodep.k[0]*nodep.d_av[0] + nodep.k[1]*nodep.d_av[1] + nodep.k[2]*nodep.d_av[2] + nodep.o; 
+  Serial.println();
+  Serial.print("Referencia final do no:  ");
+  Serial.println(reference);
+  return reference;  
 }
+
+void basic_commands(String array[], int count){
+  if(array[0] == "r" && count == 1){
+    send_consensus_order();
+    duty = consensus(); }
+}
+
+void send_consensus_order(){
+  canMsgTx.can_id = node_address;
+  canMsgTx.can_dlc = 1;
+  canMsgTx.data[0]=0b11111100;//message to request consensus
+ // noInterrupts();
+  err = can0.sendMessage(&canMsgTx);
+  //interrupts();
+  //Serial.print(err);
+  Serial.print("  Sending message to request");
+  Serial.print(" from node ");
+  Serial.println( node_address, HEX );
+  Serial.println();
+}
+
+void split_array_string(String input, String array[]){
+  StringCount = 0;
+    //Split the string into substrings
+  while (input.length() > 0)
+  {
+    int index = input.indexOf(' ');
+    if (index == -1) // No space found
+    {
+      array[StringCount++] = input;
+      break;
+    }
+    else
+    {
+      array[StringCount++] = input.substring(0, index);
+      input = input.substring(index+1);
+    }
+  }
+}
+
+
