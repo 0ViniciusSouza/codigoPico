@@ -114,7 +114,7 @@ void loop(){
         Serial.print("lendo valor "); Serial.println(idx);
         analogWrite(ledPin, 4095);
         delay(6000);
-        ks[node_order] = (read_value_y()-y00)/4095;
+        ks[node_order] = (read_value_y()-y00)/100.0;
         analogWrite(ledPin, 0);
         Serial.print("leu valor proprio ");Serial.println(idx);Serial.println();
       }
@@ -122,7 +122,7 @@ void loop(){
         Serial.print("lendo valor "); Serial.println(idx);
         analogWrite(ledPin, 0);
         delay(6000);
-        ks[idx] = (read_value_y()-y00)/4095.0;
+        ks[idx] = (read_value_y()-y00)/100.0;
         Serial.print("leu valor "); Serial.println(idx);Serial.println();
       }
     }
@@ -180,7 +180,7 @@ void send_wakeup_order(){
         Serial.print("lendo valor proprio "); Serial.println(i);
         analogWrite(ledPin, 4095);
         delay(6000);
-        ks[node_order] = (read_value_y()-y00)/4095;
+        ks[node_order] = (read_value_y()-y00)/100.0;
         analogWrite(ledPin, 0);
         Serial.print("leu valor proprio"); Serial.println(i);Serial.println();
       }
@@ -189,7 +189,7 @@ void send_wakeup_order(){
         Serial.print("lendo valor "); Serial.println(i);
         analogWrite(ledPin, 0);
         delay(6000);
-        ks[i] = (read_value_y()-y00)/4095;
+        ks[i] = (read_value_y()-y00)/100.0;
         Serial.print("leu valor "); Serial.println(i);Serial.println();
       }
     time_to_write = millis() + write_delay;
@@ -202,6 +202,10 @@ void send_wakeup_order(){
 void basic_commands(String array[], int count){
   if(array[0] == "r" && count == 1){
     send_wakeup_order();
+  }
+  else if(array[0] == "k" && count == 1){
+    Serial.println("ks = ");
+    for(int i =0; i<3; i++) Serial.println(ks[i]);
   }
 }
 
