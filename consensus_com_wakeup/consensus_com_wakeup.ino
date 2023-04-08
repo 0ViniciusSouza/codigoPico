@@ -1,6 +1,8 @@
 #include "node.h"
 #include "mcp2515.h"
 #include "consensus.h"
+#include "command_handler.h"
+#include "circular_buffer.h"
 #include <hardware/flash.h> //for flash_get_unique_id
 
 //for can bus communication
@@ -12,8 +14,7 @@ struct can_frame canMsgTx, canMsgRx;
 MCP2515::ERROR err;
 
 uint8_t pico_flash_id[8];
-unsigned long time_to_write, time_wait;
-unsigned long write_delay {10};
+
 
 const byte interruptPin {20};
 volatile byte data_available {false};
@@ -37,8 +38,8 @@ void read_interrupt(uint gpio, uint32_t events) {
 
 
 //LED and LDR
-const int ldrPin = 26;    // select the input pin for the LDR
-const int ledPin = 15;      // select the pin for the LED
+const int ldrPin = 28;    // select the input pin for the LDR
+const int ledPin = 0;      // select the pin for the LED
 float b; //value is defined in the setup
 const float m{-0.8}; //from datasheet
 const float R{10}; //resistance in kOhms
@@ -54,11 +55,22 @@ float y {0.0}; //current read of sensor
 
 uint8_t ad1, ad2;
 
+unsigned long time_wakeup, time_order, time_wait;
+unsigned long write_delay {10};
+unsigned long order_delay {1000};
+unsigned long time_consensus;
+unsigned long consensus_delay {1000};
+float ref;
 
+int node_ids[3];
+bool firstloop = 1;
+bool sleeping = 1;
+int N_nodes = 1;
 
 void setup(){
   flash_get_unique_id(pico_flash_id);
-  node_address = pico_flash_id[7];
+  node_address = pico_flash_id[6];
+  node_ids[0] = node_address;
   //order the addresses
   if(     node_address == 0x29){ad1 = 0x32; ad2 = 0x34; this_node.index=0; b = 2.9306;}
   else if(node_address == 0x32){ad1 = 0x29; ad2 = 0x34; this_node.index=1; b = 3.1694;} 
@@ -73,72 +85,147 @@ void setup(){
   can0.setBitrate(CAN_1000KBPS);
   can0.setNormalMode();
   gpio_set_irq_enabled_with_callback(interruptPin, GPIO_IRQ_EDGE_FALL, true, &read_interrupt );
-  time_to_write = millis() + write_delay;
-  if(this_node.index == 0) send_wakeup_order();
+
+  time_order = millis() + order_delay;
+  time_wakeup = millis() + write_delay;
+  time_consensus = millis() + write_delay;
 }
 
 void loop(){
-  if (Serial.available() > 0) {
-    // read the incoming string
-    inputString = Serial.readString();
-    split_array_string(inputString, strs);
-    basic_commands(strs, StringCount);
-    // clear the string:
-    inputString = "";   
-  }
+  if(firstloop){
+    if( millis() >= time_order) {
+      canMsgTx.can_id = node_address;
+      canMsgTx.can_dlc = 0;
+        
+      noInterrupts();
+      err = can0.sendMessage(&canMsgTx);
+      interrupts();
 
-  if( data_available ){
-   // noInterrupts();
-    can_frame frm {canMsgRx}; //local copy
-   // interrupts();
-    data_available = false;
-    Serial.print("Received message from node ");
-    Serial.print( canMsgRx.can_id , HEX);
-    Serial.print(" : ");
-    Serial.println(" ");
-    //Serial.println();
+      if(N_nodes == 3){
+        delay(1000);
+        
+        if(node_ids[0] > node_ids[1]){
+          if(node_ids[0] > node_ids[2]) this_node.index = 2;
+          else this_node.index = 1;
+        } 
+        else if(node_ids[0] > node_ids[2]) this_node.index = 1;
+        else this_node.index = 0;
 
-    if(frm.data[0] == 0b11111100){ 
-      Serial.println("Comando consensus recebido por can bus");
-      Serial.println();
-    //  duty = consensus();
+        delay(5000);
+
+        Serial.print("Node_ID: ");
+        Serial.println(this_node.index);
+
+        firstloop = 0;
+      }
+
+      time_order = millis() + order_delay;
     }
 
-    else if((frm.data[0] & 0b00011111) == 0b00011111){
-      Serial.println("Comando de wakeup recebido");
-      int idx = frm.data[0] >> 6;
-      Serial.print("Idx = "); Serial.println(idx);
-      if(idx == 3){ //all leds turned off
-        Serial.println("lendo valor y00");
-        analogWrite(ledPin, 0); //turn off led
-        delay(6000); //delay de 6s
-        y00 = read_value_y();
-        Serial.println("leu valor y00");
+    if( data_available ) {
+        noInterrupts();
+        can_frame frm {canMsgRx}; //local copy
+        interrupts();
+
+        if(N_nodes == 1){ 
+          node_ids[N_nodes] = frm.can_id;
+          N_nodes++;
+        }
+        else if(node_ids[1] != frm.can_id){
+          node_ids[N_nodes] = frm.can_id;
+          N_nodes++;
+        }
+        
+        data_available = false;
+    }
+    
+  } else {
+    if(sleeping && this_node.index == 0){
+      send_wakeup_order();
+      sleeping = 0;
+    }
+    
+    if (Serial.available() > 0) {
+      // read the incoming string
+      inputString = Serial.readString();
+      split_array_string(inputString, strs);
+      basic_commands(strs, StringCount);
+      // clear the string:
+      inputString = "";   
+    }
+  
+    if( data_available ){
+     // noInterrupts();
+      can_frame frm {canMsgRx}; //local copy
+     // interrupts();
+      data_available = false;
+  
+      command can_command{ch::frame2command(frm)};
+  
+      Serial.print( this_node.index );
+      Serial.print(" - Received command - ");
+      Serial.print( can_command.message );
+      Serial.print(" - from node ");
+      Serial.print( can_command.from_desk_id );
+      Serial.print(" - can_id - ");
+      Serial.print(frm.can_id,BIN);
+      Serial.println();
+      //Serial.println();
+  
+      if(1==0){ 
+        Serial.println("Comando consensus recebido por can bus");
         Serial.println();
+      //  duty = consensus();
       }
-      else if(idx == this_node.index){//LED turn on at max
-        Serial.print("lendo valor "); Serial.println(idx);
-        analogWrite(ledPin, 4095);
-        delay(6000);
-        this_node.k[this_node.index] = (read_value_y()-y00)/4095;
-        analogWrite(ledPin, 0);
-        Serial.print("leu valor proprio ");Serial.println(idx);Serial.println();
-      }
-      else{ //other nodes turn their led on
-        Serial.print("lendo valor "); Serial.println(idx);
-        analogWrite(ledPin, 0);
-        delay(6000);
-        this_node.k[idx] = (read_value_y()-y00)/4095.0;
-        Serial.print("leu valor "); Serial.println(idx);Serial.println();
+  
+      else if(can_command.command_num == 28 && can_command.isRequest){
+        Serial.println("Comando de wakeup recebido");
+        int idx = can_command.to_desk_id;
+        Serial.print("Idx = "); Serial.println(idx);
+        if(idx == 3){ //all leds turned off
+          Serial.println("lendo valor y00");
+          analogWrite(ledPin, 0); //turn off led
+          delay(6000); //delay de 6s
+          y00 = read_value_y();
+          Serial.println("leu valor y00");
+          Serial.println();
+        }
+        else if(idx == this_node.index){//LED turn on at max
+          Serial.print("lendo valor "); Serial.println(idx);
+          analogWrite(ledPin, 4095);
+          delay(6000);
+          this_node.k[this_node.index] = (read_value_y()-y00)/4095;
+          analogWrite(ledPin, 0);
+          Serial.print("leu valor proprio ");Serial.println(idx);Serial.println();
+        }
+        else{ //other nodes turn their led on
+          Serial.print("lendo valor "); Serial.println(idx);
+          analogWrite(ledPin, 0);
+          delay(6000);
+          this_node.k[idx] = (read_value_y()-y00)/4095.0;
+          Serial.print("leu valor "); Serial.println(idx);Serial.println();
+        }
       }
     }
   }
 }
 
 void send_wakeup_order(){
-  canMsgTx.can_dlc = 1;
-  canMsgTx.can_id = node_address;
-  canMsgTx.data[0] = 0b11111111;
+//  canMsgTx.can_dlc = 1;
+//  canMsgTx.can_id = node_address;
+//  canMsgTx.data[0] = 0b11111111;
+
+  command can_command {
+    "w ",
+    1,
+    28,
+    0,
+    this_node.index,
+    3
+  };
+
+  canMsgTx = ch::command2frame(can_command);
+  
   noInterrupts();
   err = can0.sendMessage(&canMsgTx);
   interrupts();
@@ -148,39 +235,64 @@ void send_wakeup_order(){
   delay(6000); //delay de 6s
   y00 = read_value_y();
   Serial.println("leu valor y00");
+  
+  Serial.print("Node_ID: ");
+  Serial.println(this_node.index);
+  
   int i = 0;
   while(i<3){
-    if(millis() >= time_to_write){
-      if(i == 0){
-        Serial.println("Mandando a primeira mensagem"); Serial.println();
-        canMsgTx.can_dlc = 1;
-        canMsgTx.can_id = node_address;
-        canMsgTx.data[0] = 0b00111111;
-        //sends the message
-        noInterrupts();
-        err = can0.sendMessage(&canMsgTx);
-        interrupts();
-      }
-      else if(i == 1){
-        Serial.println("Mandando a segunda mensagem"); Serial.println();
-        canMsgTx.can_dlc = 1;
-        canMsgTx.can_id = node_address;
-        canMsgTx.data[0] = 0b01111111;
-        //sends the message
-        noInterrupts();
-        err = can0.sendMessage(&canMsgTx);
-        interrupts();
-      }
-      else if(i == 2){
-        Serial.println("Mandando a terceira mensagem"); Serial.println();
-        canMsgTx.can_dlc = 1;
-        canMsgTx.can_id = node_address;
-        canMsgTx.data[0] = 0b10111111;
-        //sends the message
-        noInterrupts();
-        err = can0.sendMessage(&canMsgTx);
-        interrupts();
-      }
+    if(millis() >= time_wakeup){
+      Serial.print("Mandando a ");Serial.print(i);
+      Serial.print("a. mensagem"); Serial.println();
+
+      command can_command {
+          "w " + String(i),
+          1,
+          28,
+          0,
+          this_node.index,
+          i
+        };
+
+      canMsgTx = ch::command2frame(can_command);
+      //sends the message
+      noInterrupts();
+      err = can0.sendMessage(&canMsgTx);
+      interrupts();
+      
+//      if(i == 0){
+//        Serial.println("Mandando a primeira mensagem"); Serial.println();
+//        canMsgTx.can_dlc = 1;
+//        canMsgTx.can_id = node_address;
+//        canMsgTx.data[0] = 0b00111111;
+//    
+//        canMsgTx = ch::command2frame(can_command);
+//        //sends the message
+//        noInterrupts();
+//        err = can0.sendMessage(&canMsgTx);
+//        interrupts();
+//      }
+//      else if(i == 1){
+//        Serial.println("Mandando a segunda mensagem"); Serial.println();
+//        canMsgTx.can_dlc = 1;
+//        canMsgTx.can_id = node_address;
+//        canMsgTx.data[0] = 0b01111111;
+//        
+//        //sends the message
+//        noInterrupts();
+//        err = can0.sendMessage(&canMsgTx);
+//        interrupts();
+//      }
+//      else if(i == 2){
+//        Serial.println("Mandando a terceira mensagem"); Serial.println();
+//        canMsgTx.can_dlc = 1;
+//        canMsgTx.can_id = node_address;
+//        canMsgTx.data[0] = 0b10111111;
+//        //sends the message
+//        noInterrupts();
+//        err = can0.sendMessage(&canMsgTx);
+//        interrupts();
+//      }
 
       if(i == this_node.index){
         Serial.print("lendo valor proprio "); Serial.println(i);
@@ -198,7 +310,7 @@ void send_wakeup_order(){
         this_node.k[i] = (read_value_y()-y00)/4095;
         Serial.print("leu valor "); Serial.println(i);Serial.println();
       }
-    time_to_write = millis() + write_delay;
+    time_wakeup = millis() + write_delay;
     i++;
     }
   }
@@ -283,7 +395,7 @@ float consensus(){
       int msg_received1{0};
       int msg_received2{0};
       while(msg_sent < 3 && msg_received1 <3 && msg_received2 <3){
-        if(millis() >= time_to_write && msg_sent < 3 && states[track_state] == 1 ) {// && (send_ack1 == false || send_ack2 == false) && msg_sent < 3 ){
+        if(millis() >= time_consensus && msg_sent < 3 && states[track_state] == 1 ) {// && (send_ack1 == false || send_ack2 == false) && msg_sent < 3 ){
             //creates the message
             unsigned long message = this_node.d[msg_sent];
             canMsgTx.can_id = node_address;
@@ -319,7 +431,7 @@ float consensus(){
             //   Serial.print( canMsgTx.data[ k ], BIN), Serial.print(" ");
             // Serial.println();
             msg_sent++;
-            time_to_write = millis() + write_delay;
+            time_consensus = millis() + write_delay;
         }
 
         if(data_available && states[track_state] == 0){ //recebeu mensagem e esta no estado de receber

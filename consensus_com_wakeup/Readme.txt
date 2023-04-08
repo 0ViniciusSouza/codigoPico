@@ -1,1 +1,2 @@
-
+Código que roda o algoritmo de consenso usando o can bus. Para rodar o código, basta digitar 'c' no serial de um dos raspberries. O código retorna a referência que o nó deverá seguir. Deve-se atentar ao fato de que a saída será dada em float (verificar se é necessária a conversão para int posteriormente).
+OBS: falta toda a parte de wake up, então os endereços precisam ser colocados de forma manual (linha 238 a 240 do código)
