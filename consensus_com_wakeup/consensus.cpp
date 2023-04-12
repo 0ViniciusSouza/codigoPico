@@ -16,8 +16,8 @@ float evaluate_cost(struct Node node, float d[], float rho, int vector_size){
 
 bool check_feasibility(struct Node node, float d[], int vector_size){
     float tol = 0.001; //tolerance for rounding errors
-    if (d[node.index] < 0-tol) return false;
-    if (d[node.index] > 100 + tol) return false;
+    if (d[node.index] < 0.-tol) return false;
+    if (d[node.index] > 100.0 + tol) return false;
     float d_k{0};
     float L_o_t{0};
     for(int i=0; i<vector_size;i++){

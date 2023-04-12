@@ -27,7 +27,7 @@ namespace ch {
       6,2,2,2,
       2,4,2,4,
       2,2,4,4,
-      0,0,0,0
+      0,2,0,0
     },
     {
       2,1,2,1,
@@ -50,7 +50,7 @@ namespace ch {
       "b "  , "e "  , "v "  , "f "  ,
       "O "  , ""    , "U "  , ""    ,
       "L "  , "c "  , ""    , ""    ,
-      ""    , ""    , ""    , ""   
+      ""    , "C "    , ""    , ""   
   },
   {
       "d "  , "g d ", "r "  , "g r ",
@@ -60,7 +60,7 @@ namespace ch {
       "g b ", "g e ", "g v ", "g f ",
       "g O ", "O "  , "g U ", "U "  ,
       "g L ", "g c ", "c "  , "r"   ,
-      "w "  , " "   , " "   , " "
+      "w "  , "C"   , " "   , " "
   }
   };
 
@@ -92,6 +92,7 @@ namespace ch {
     int messageData[8] {0};
 
     for(int i = 0; i < 8; i++){
+      if (data == 0) break;
       int two_pow = 1;
       for(int j = 0; j < 8; j++){
         messageData[i] += two_pow * (data % 2);
@@ -99,7 +100,6 @@ namespace ch {
         two_pow *= 2;
       }
       can_dlc++;
-      if (data == 0) break; 
     }
 
     canMsgTx.can_dlc = can_dlc;        
