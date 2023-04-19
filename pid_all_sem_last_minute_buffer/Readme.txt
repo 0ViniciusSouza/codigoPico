@@ -1,0 +1,1 @@
+Tentativa de juntar códigos do PID com struct de node. Falta checar a parte do last minute buffer para imprimir no serial. O código também apresenta o problema de às vezes não conectar diretamente no serial.
